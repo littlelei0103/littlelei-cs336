@@ -1,0 +1,49 @@
+# ===== 大数据文件（13G+，绝不能上传）=====
+data/
+*.txt.gz
+
+# ===== 虚拟环境（uv 可重建，几个 G）=====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== Python 缓存 / 编译产物 =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ===== 测试 / 类型检查缓存 =====
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+.ipynb_checkpoints/
+
+# ===== 环境变量 / 密钥（千万别传）=====
+.env
+.env.*
+
+# ===== 课程材料 PDF（版权，不公开 redistribute）=====
+*.pdf
+
+# ===== lectures 课件大件（斯坦福素材，不上传）=====
+lectures/assets/
+lectures/images/
+lectures/var/
+
+# ===== 系统 / 编辑器文件 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
