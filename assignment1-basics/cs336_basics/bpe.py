@@ -17,6 +17,8 @@ import heapq
 # GPT-2 预分词正则（handout 第 6 页直接给定，可原样使用）
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
+num_processes = min(4, os.cpu_count())
+
 class HeapNode:
     def __init__(self, pair: tuple[bytes, bytes], count: int):
         self.pair = pair
@@ -98,9 +100,9 @@ def train_bpe(
     # TODO(决策1): 读语料 -> 预分词 -> 建频次表 dict[tuple[bytes, ...], int]
     counts = defaultdict(int)
     with open(input_path, "rb") as f:
-        boundaries = find_chunk_boundaries(f, desired_num_chunks=os.cpu_count(), split_special_token=b"<|endoftext|>")
+        boundaries = find_chunk_boundaries(f, desired_num_chunks=num_processes, split_special_token=b"<|endoftext|>")
         tasks = [(input_path, s, e, special_tokens) for s, e in zip(boundaries[:-1], boundaries[1:])]
-        with Pool(processes=os.cpu_count()) as pool:
+        with Pool(processes=num_processes) as pool:
             results = pool.map(process_chunk, tasks)
             for result in results:
                 for key, value in result.items():
@@ -124,8 +126,12 @@ def train_bpe(
     # 使用堆来优化选出频次最高的 pair
     heap = [HeapNode(pair, count) for pair, count in pair_counts.items()]
     heapq.heapify(heap)
+    cnt = 0
     while len(vocab) < vocab_size:
         # TODO(决策3): 选出频次最高的 pair（平局取字典序更大者）
+        if cnt % 200 == 0:
+            heap = [HeapNode(pair, count) for pair, count in pair_counts.items()]
+            heapq.heapify(heap)
         while heap:
             best_node = heapq.heappop(heap)
             best = best_node.pair
@@ -152,9 +158,11 @@ def train_bpe(
             for i in range(len(key) - 1):
                 pair = (key[i], key[i + 1])
                 pair_counts[pair] -= counts[key]
+                backtrack[pair].discard(key)
                 changed.add(pair)
                 if pair_counts[pair] == 0:
                     del pair_counts[pair]
+                    del backtrack[pair]
             for i in range(len(new_key) - 1):
                 pair = (new_key[i], new_key[i + 1])
                 pair_counts[pair] += counts[key]
@@ -162,11 +170,13 @@ def train_bpe(
                 backtrack[pair].add(new_key)
             backtrack[best].discard(key)
             counts[new_key] += counts[key]
-            counts[key] = 0
+            del counts[key]
         
         for pair in changed:
             if pair in pair_counts:
                 heapq.heappush(heap, HeapNode(pair, pair_counts[pair]))
+                
+        cnt += 1
     #print(merges)
     return vocab, merges
 

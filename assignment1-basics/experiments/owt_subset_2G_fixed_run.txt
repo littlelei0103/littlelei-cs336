@@ -1,0 +1,34 @@
+Running as unit: run-p29026-i29747.scope; invocation ID: 13824c1065b749b298f61ae8776ed1a0
+耗时: 875.1288108825684
+最长token: b'----------------------------------------------------------------'
+	Command being timed: "/home/littlelei/.local/bin/uv run python -c 
+import time
+from cs336_basics.bpe import train_bpe, Tokenizer
+t0=time.time()
+vocab,merges=train_bpe('data/owt_subset_2G.txt',32000,['<|endoftext|>'])
+print('耗时:',time.time()-t0)
+Tokenizer(vocab,merges,['<|endoftext|>']).save('experiments/owt_vocab_2G.json','experiments/owt_merges_2G.json')
+print('最长token:',max(vocab.values(),key=len))
+"
+	User time (seconds): 1240.76
+	System time (seconds): 24.01
+	Percent of CPU this job got: 144%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 14:35.62
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3684400
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 4268
+	Minor (reclaiming a frame) page faults: 6438998
+	Voluntary context switches: 8266
+	Involuntary context switches: 7042
+	Swaps: 0
+	File system inputs: 4264080
+	File system outputs: 2248
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
