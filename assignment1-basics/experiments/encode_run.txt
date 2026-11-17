@@ -1,0 +1,33 @@
+Running as unit: run-p57164-i58018.scope; invocation ID: 0dcdf1a9bc164effb89629b9f05c4791
+Total bytes: 8714, Total tokens: 2107, Compression ratio: 4.14
+Total bytes: 52924, Total tokens: 12085, Compression ratio: 4.38
+Total bytes: 52924, Total tokens: 16240, Compression ratio: 3.26
+Throughput: 834904.46 bytes/s
+Estimated time to process Pile: 294.72 hours
+(541229347,) uint16 1082458694
+(5465883,) uint16 10931766
+(491405641,) uint16 982811282
+(66415741,) uint16 132831482
+	Command being timed: "/home/littlelei/.local/bin/uv run python tokenizer_experiments.py"
+	User time (seconds): 5972.46
+	System time (seconds): 8.69
+	Percent of CPU this job got: 100%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:39:38
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1413504
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 13
+	Minor (reclaiming a frame) page faults: 734883
+	Voluntary context switches: 266
+	Involuntary context switches: 24782
+	Swaps: 0
+	File system inputs: 9248184
+	File system outputs: 4314544
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
