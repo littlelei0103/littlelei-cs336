@@ -1,0 +1,73 @@
+\documentclass[12pt]{ctexart}
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{enumitem}
+
+\title{CS336 Assignment 1: Basics\\\large Writeup}
+\author{littlelei}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+% 使用说明：
+%   1. 每个 \subsection 下面写 1-2 句答案（把"% 你的答案："换成你的话）。
+%   2. 中文需用 XeLaTeX 编译（Overleaf: Menu -> Compiler -> XeLaTeX）。
+%   3. 本文件只有题目骨架，答案由你自己填写。
+%   4. 后续 Transformer 部分的书面题可继续往后加 \section。
+% ============================================================
+
+\section{unicode1: Understanding Unicode}
+
+\subsection{(a) \texttt{chr(0)} 返回什么 Unicode 字符？}
+返回 \texttt{NUL}（空字符），是一个控制字符；把它当作字符串结尾标志是 C 语言的用法。
+
+\subsection{(b) 该字符的 \texttt{\_\_repr\_\_()} 与打印输出有何不同？}
+\texttt{repr} 显示成 \verb|'\x00'|（转义形式），\texttt{print} 则直接看不见。
+
+\subsection{(c) 该字符出现在文本中会怎样？}
+它出现在文本里不会截断字符串，会占一个位置但不会显示出来。
+
+\section{unicode2: Unicode Encodings}
+
+\subsection{(a) 为何偏好 UTF-8 而非 UTF-16 / UTF-32？}
+对 ASCII 字符，UTF-8 用 1 字节，而 UTF-16、UTF-32 分别用 2、4 字节，UTF-8 更省空间。此外，多字节编码（UTF-16/32）有字节序问题：大端、小端的字节顺序不同，需要单独记录一个 BOM 来指明字节序，又会多占空间。
+
+\subsection{(b) \texttt{decode\_utf8\_bytes\_to\_str\_wrong} 为何错误？举一个出错输入。}
+中文汉字的 UTF-8 是 3 字节，如“牛”为 \verb|b'\xe7\x89\x9b'|；该函数把多字节字符拆散、逐字节单独 decode，单个字节不合法，如 \verb|b'\xe7'.decode('utf-8')| 会报 \texttt{UnicodeDecodeError}。
+
+\subsection{(c) 给出一个不能解码成任何 Unicode 字符的双字节序列。}
+UTF-8 里有些字节值永远不合法，如 \verb|b'\x80\x80'.decode('utf-8')| 或 \verb|b'\xff\xff'.decode('utf-8')| 都会报错（\texttt{invalid start byte}）。
+
+\section{train\_bpe\_tinystories}
+
+\subsection{(a) 训练耗时与内存？最长 token 是什么？合理吗？}
+训练耗时约 \texttt{3.1} min（188.8\,s），峰值内存约 \texttt{6.2} GB。最长 token 是 \verb| accomplishment|，是一个正常的英文单词，合理——因为训练语料是儿童故事，出现 \texttt{accomplishment} 这类词很自然。
+
+\subsection{(b) profile：训练过程中哪部分最耗时？}
+瓶颈是 merge 循环中选取最高频 pair 的步骤（profile 中 \texttt{max} 及其 key lambda 的累计时间约占 90\,s/112\,s）。
+
+\section{train\_bpe\_expts\_owt}
+
+\subsection{(a) 最长 token 是什么？合理吗？}
+最长 token 是由 64 个连字符 \texttt{-} 组成的长串（形如 \texttt{----...----}），也合理，因为网页里这种分隔符很常见。
+
+\subsection{(b) 对比 TinyStories 与 OpenWebText 训出的词表。}
+词表大小：\texttt{10000} vs \texttt{32000}；词表内容：TinyStories 多为故事词汇，OpenWebText 多为网页杂物。
+
+\section{tokenizer\_experiments}
+
+\subsection{(a) 两个词表各自的压缩率（bytes/token）？}
+压缩率分别是 TinyStories \texttt{4.14} bytes/token 和 OWT \texttt{4.38} bytes/token。OWT 压缩更好，因为词表大小有 \texttt{32000}，学出来的词表里的词对应的 bytes 可以更长。
+
+\subsection{(b) 用 TinyStories 词表编码 OpenWebText 样本会怎样？}
+跨词表压缩率只有 \texttt{3.26} bytes/token，效果变差，因为 OWT 中的词可能 TinyStories 的词表没怎么见过，只能切得很碎，导致 token 数增加，压缩率降低。
+
+\subsection{(c) 吞吐量（bytes/sec）？编码 Pile（825GB）约需多久？}
+吞吐量是 \texttt{0.83} MB/s，编码 Pile 大概需要 295 个小时。瓶颈在于 Python 比较慢，换成 C++ 或者 Rust 等语言可以提速。
+
+\subsection{(d) 为何 uint16 是合适的存储类型？}
+因为 \texttt{uint16} 可以表示 0--65535，而我们的词表大小 10000 和 32000 均小于这个数，而且 \texttt{uint16} 相比 \texttt{int64} 空间只有 1/4。
+
+\end{document}
