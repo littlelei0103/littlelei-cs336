@@ -12,7 +12,9 @@
 ## 📊 进度
 
 - [x] **Assignment 1 · BPE 分词器**（TinyStories + OWT 训练、编码/解码/序列化、压缩率/吞吐量实验）
-- [ ] Assignment 1 · Transformer 语言模型
+- [x] **Assignment 1 · Transformer 语言模型**（RMSNorm / SwiGLU / RoPE / MHA / pre-norm Block / 整栈，模型测试 13/13）
+- [x] **Assignment 1 · 训练工具 + 解码**（cross-entropy / 梯度裁剪 / AdamW / cosine 调度 / get_batch / checkpoint / temperature+top-p 采样）
+- [ ] Assignment 1 · 训练循环 + 消融实验（LR / batch size / RMSNorm / post-norm / NoPE / SwiGLU / OWT）
 - [ ] 后续：训练系统 / 分布式 / 缩放定律 / 对齐 …（持续更新 🌱）
 
 ## ✨ Assignment 1 · BPE
@@ -52,6 +54,39 @@
 
 > 💡 优化心得：**实测 > 直觉**。一开始猜堆幽灵是主犯，profile 后才发现真正的泄漏是 backtrack 集合里被死词 tuple 占着、GC 回收不掉的内存。抓泄漏要顺着"谁还指着这块内存"去想 🧠
 
+## ✨ Assignment 1 · Transformer 语言模型
+
+从零手写完整 GPT 式模型，无 `nn.Linear`/`nn.Embedding` 等现成层（全部自实现）：
+
+| 组件 | 实现要点 |
+|------|---------|
+| `Linear` / `Embedding` | 手写 `Parameter` + 截断正态初始化（$\sigma^2=2/(d_{in}+d_{out})$ / $N(0,1)$，`trunc_normal_`） |
+| `RMSNorm` | 最后一维求 RMS，先 upcast fp32 再 downcast；无均值中心化 |
+| `SwiGLU` | $W_2(\mathrm{SiLU}(W_1x)\odot W_3x)$，$d_{ff}\approx\frac83 d_{model}$ |
+| RoPE | 预计算 cos/sin buffer（不学习），相邻配对旋转 $q,k$，不转 $v$ |
+| Attention | $\mathrm{softmax}(QK^\top/\sqrt{d_k}+M)V$，布尔 mask（False→$-\infty$） |
+| MHA | 单次 QKV 投影 → 拆头 → RoPE → 因果 mask → 合头 → $W_o$ |
+| Block | pre-norm + residual：$x\leftarrow x+\mathrm{Sublayer}(\mathrm{RMSNorm}(x))$ |
+| LM | Embedding → N×Block → final RMSNorm → LM head（位置信息全靠 RoPE） |
+
+验收：`uv run pytest` → **47 passed, 1 xfailed**（xfail 为官方标记的预期失败项），其中模型测试 **13/13**。
+
+配套书面题（Resource Accounting）与数学推导整理在 `writeup.tex`、`math_notes.tex` 中。
+
+## ✨ Assignment 1 · 训练工具 + 解码
+
+| 模块 | 实现要点 |
+|------|---------|
+| cross-entropy | log-sum-exp 数值稳定；返回 batch 平均 |
+| gradient clipping | 全局 L2 范数 + 等比缩放（只改长度不改方向），原地更新 |
+| AdamW | $m,v$ 二阶矩 + 偏差修正折进步长 + **解耦**权重衰减 |
+| LR schedule | 线性 warmup + cosine 退火 + 尾部常数 |
+| `get_batch` | 随机起点采样，label 为 input 右移一位 |
+| checkpoint | model/optimizer state + iteration 存取，支持续训 |
+| decode | 自回归采样：温度缩放 + top-p（nucleus）+ eot 停止 + 贪心兜底 |
+
+`train.py` 的参数框架（argparse）已就绪，训练循环待填；数据已离线 tokenize 为 uint16 `.npy`。
+
 ## 🧪 Tokenizer 实验
 
 | 实验 | 结果 |
@@ -66,14 +101,24 @@
 ```
 CS336/
 ├── assignment1-basics/        # Assignment 1
-│   ├── cs336_basics/bpe.py    # 核心实现（train_bpe + Tokenizer）
-│   ├── train_tokenizer.py     # TinyStories 训练驱动
-│   ├── train_owt.py           # OWT 训练驱动
+│   ├── cs336_basics/
+│   │   ├── bpe.py            # BPE（train_bpe + Tokenizer）
+│   │   ├── nn.py             # Linear/Embedding/RMSNorm/SwiGLU + softmax/silu
+│   │   ├── transformer.py    # RoPE / attention / MHA / Block / LM
+│   │   ├── optim.py          # AdamW
+│   │   ├── train_utils.py    # loss/clip/get_batch/schedule/checkpoint
+│   │   └── generate.py       # decode（temperature + top-p）
+│   ├── train.py              # 训练脚本（argparse 就绪，循环待填）
+│   ├── train_tokenizer.py    # TinyStories BPE 训练驱动
+│   ├── train_owt.py          # OWT BPE 训练驱动
 │   ├── tokenizer_experiments.py  # 压缩率/吞吐量/uint16 编码实验
-│   ├── experiments/           # 训练产物 (vocab/merges/.npy) + 运行日志
-│   ├── tests/                 # 官方测试
-│   └── data/                  # 数据集（已 gitignore，需自行下载）
-└── lectures/                  # 课程讲义代码（课件素材已 gitignore）
+│   ├── math_notes.tex        # 数学笔记（PE/RoPE/attention/AdamW…）
+│   ├── writeup.tex           # 书面题答案（unicode/BPE/tokenizer/记账）
+│   ├── experiments/          # 词表/运行日志/编码数组（.npy 已 gitignore）
+│   ├── tests/                # 官方测试
+│   └── data/                 # 数据集（已 gitignore，需自行下载）
+├── lectures/                 # 课程讲义代码（课件素材已 gitignore）
+└── vibe_images/              # 讲解示意图（AI 生成，未纳入版本库）
 ```
 
 ## 🚀 快速开始
@@ -82,9 +127,10 @@ CS336/
 
 ```sh
 cd assignment1-basics
-uv run pytest                        # 跑测试
-uv run python train_tokenizer.py     # 训练 TinyStories 分词器
-uv run python train_owt.py           # 训练 OWT 分词器
+uv run pytest -q                      # 全量测试（当前 47 passed, 1 xfailed）
+uv run python train.py --help         # 训练脚本参数
+uv run python train_tokenizer.py      # 训练 TinyStories 分词器
+uv run python train_owt.py            # 训练 OWT 分词器
 uv run python tokenizer_experiments.py  # 压缩率/吞吐量/uint16 实验
 ```
 

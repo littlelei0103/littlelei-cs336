@@ -1,0 +1,162 @@
+\documentclass[12pt]{ctexart}
+\usepackage[a4paper, margin=2.5cm]{geometry}
+\usepackage{amsmath, amssymb}
+
+\title{CS336 数学笔记\\\large littlelei}
+\author{littlelei}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+% 数学笔记本：讲解中的公式与推导都收在这里，用 XeLaTeX 编译。
+
+\section{位置编码：正弦 PE（原论文）}
+
+Vaswani et al. (2017), \emph{Attention Is All You Need}, \S3.5。
+给每个位置 $pos$ 生成一个 $d_{\text{model}}$ 维向量，\textbf{加}到 token embedding 上。
+
+\subsection{公式}
+\begin{align}
+PE_{(pos,\,2i)}   &= \sin\!\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right) \\
+PE_{(pos,\,2i+1)} &= \cos\!\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)
+\end{align}
+其中 $pos$ 为位置下标，$i \in \{0,\dots,d_{\text{model}}/2-1\}$ 为维度对编号。
+偶数维放 $\sin$、奇数维放 $\cos$，同一对共用角频率
+$\omega_i = 10000^{-2i/d_{\text{model}}}$。
+
+\subsection{直觉：一排转速不同的时钟指针}
+每一对 $(\sin,\cos)$ 同频率，合起来是单位圆上角度为 $pos\cdot\omega_i$ 的点，即一根指针。
+$i$ 越大 $\Rightarrow$ $\omega_i$ 越小 $\Rightarrow$ 转得越慢：
+低维快指针捕捉近距离，高维慢指针捕捉远距离（与 RoPE 的多频率思路同源）。
+
+\subsection{为什么 sin/cos 成对：相对位置的线性性}
+由和角公式，对固定偏移 $k$：
+\[
+\begin{pmatrix}\sin\omega(pos+k)\\ \cos\omega(pos+k)\end{pmatrix}
+=
+\begin{pmatrix}\cos\omega k & \sin\omega k\\ -\sin\omega k & \cos\omega k\end{pmatrix}
+\begin{pmatrix}\sin\omega\,pos\\ \cos\omega\,pos\end{pmatrix}
+\]
+即 $PE(pos+k) = M(k)\,PE(pos)$，矩阵 $M(k)$ 只依赖相对偏移 $k$。
+因此相对位置关系可被\textbf{线性}表示，模型易于学习；单独 $\sin$ 不具备该性质。
+
+\subsection{与 RoPE 对比}
+\begin{itemize}
+  \item 正弦 PE：$x = \text{embedding} + PE$，加固定向量，无学习参数，可外推。
+  \item RoPE：不加向量，改为按位置\textbf{旋转} $q,k$，使 $q\cdot k$ 只依赖相对距离 $i-j$；
+        不旋转 $v$（$v$ 是被搬运的内容，不应被位置扭曲）。
+\end{itemize}
+
+\section{RoPE：配对约定与旋转公式}
+
+\subsection{两套配对约定（等价，差一个固定置换）}
+\begin{itemize}
+  \item 相邻（interleaved）：$(0,1),(2,3),(4,5),\dots$；原 RoPE 论文数学写法、GPT-J 系、\textbf{本 handout}（$q_{2k-1:2k}$）。
+  \item 半分（split-half / rotate\_half）：$(i,\,i+d/2)$；GPT-NeoX / Llama / HF 系。
+\end{itemize}
+两者仅差一个固定维度置换；因 $W_q,W_k$ 可学习，置换被权重吸收，表达能力相同。
+但实现须与测试/参考约定一致。正弦 PE 亦为相邻（$\sin$ 偶维、$\cos$ 奇维）。
+
+\subsection{每对的 2D 旋转}
+对第 $j$ 对（0-indexed）$(x,y)=(q_{2j},q_{2j+1})$，位置 $i$：
+\[
+\begin{pmatrix}x'\\ y'\end{pmatrix}
+=
+\begin{pmatrix}\cos\theta_{i,j} & -\sin\theta_{i,j}\\ \sin\theta_{i,j} & \cos\theta_{i,j}\end{pmatrix}
+\begin{pmatrix}x\\ y\end{pmatrix},
+\qquad
+\theta_{i,j}=\frac{i}{10000^{2j/d}}
+\]
+（handout 1-indexed 形式：$\theta_{i,k}=i/\Theta^{(2k-2)/d}$，$k\in\{1,\dots,d/2\}$，$\Theta=10000$。）
+
+\subsection{相对位置性质}
+$R(i\theta)q \cdot R(j\theta)k = q \cdot R((j-i)\theta)k$，点积只依赖相对距离 $i-j$。
+只旋转 $q,k$，不旋转 $v$（$v$ 为内容，不应被位置扭曲）。
+
+\section{Scaled Dot-Product Attention（因果）}
+
+\[
+\text{Attention}(Q,K,V)=\text{softmax}\!\left(\frac{QK^{\top}}{\sqrt{d_k}}+M\right)V
+\]
+其中 $Q=xW_q,\ K=xW_k,\ V=xW_v$；$M$ 为因果掩码（允许处 $0$、未来处 $-\infty$），
+softmax 按行（key 维）归一化。
+
+\subsection{要点}
+\begin{itemize}
+  \item $q_i\cdot k_j$ 衡量位置 $j$ 对 $i$ 的相关性；softmax 转为概率分布；
+        $\text{out}_i=\sum_j w_{ij}v_j$ 为加权 gather 过去内容。
+  \item 缩放 $\sqrt{d_k}$：点积方差随 $d_k$ 增长，不缩放会使 softmax 饱和、梯度消失。
+  \item 掩码用 $-\infty$ 而非 $0$：softmax 只看相对大小，$0$ 仍可能分得正权重；
+        $-\infty$ 经 softmax 严格为 $0$。
+  \item 因果性：位置 $i$ 仅关注 $j\le i$（下三角），不可见未来。
+\end{itemize}
+
+\section{Multi-Head Attention}
+
+单头对每个位置只产出一个 softmax 分布（一种关注模式）；多头提供多个独立分布，
+分别捕捉局部、长程、全局等不同关系。
+
+设头数 $h$，$d_{\text{head}}=d_{\text{model}}/h$。每头：
+$Q_h=xW_q^h,\ K_h=xW_k^h,\ V_h=xW_v^h \in \mathbb{R}^{seq\times d_{\text{head}}}$，
+$\text{out}_h=\text{Attention}(Q_h,K_h,V_h)$。
+拼接后 $\text{concat}(\text{out}_1,\dots,\text{out}_h)\in\mathbb{R}^{seq\times d_{\text{model}}}$，
+再乘输出投影 $W_o\in\mathbb{R}^{d_{\text{model}}\times d_{\text{model}}}$。
+
+实现等价形式：一次大投影后 reshape 为 $(seq,h,d_{\text{head}})$ 批量计算，再 reshape 回。
+参数量与单头大投影同量级（$h\cdot d_{\text{model}}d_{\text{head}}=d_{\text{model}}^2$）。
+
+\section{Transformer Block：pre-norm + residual}
+
+一个 Block 串两个子层（causal MHA、SwiGLU FFN），每个子层套同一模板：
+\begin{align}
+x &\leftarrow x + \text{MHA}(\text{RMSNorm}(x)) \\
+x &\leftarrow x + \text{FFN}(\text{RMSNorm}(x))
+\end{align}
+
+\subsection{pre-norm vs post-norm}
+\begin{itemize}
+  \item pre-norm（本 handout / Llama 系）：norm 只在支路，主干残差流保持恒等直通、不被缩放。
+  \item post-norm（Vaswani 原文）：$x \leftarrow \text{RMSNorm}(x + \text{Sublayer}(x))$，norm 在主干上。
+\end{itemize}
+
+\subsection{残差 = 恒等 bypass（梯度高速公路）}
+$x_{out}=x+f(x)$，故 $\partial x_{out}/\partial x = I + \partial f/\partial x$。
+恒等项 $I$ 保证即使子层梯度消失，梯度仍无损传回浅层 $\Rightarrow$ 深层堆叠可训练。
+每个 Block 只学小修正 $\Delta=f(\text{RMSNorm}(x))$，而非重建整个表示（恒等兜底）。
+C++ 类比：\texttt{x += f(norm(x));}（累加修正）而非 \texttt{x = f(norm(x));}（覆盖）。
+
+\subsection{final RMSNorm}
+残差流随深度不断累加、幅度增长，故最后一个 Block 之后、LM head 之前需一个 final RMSNorm 拉回标准尺度。
+
+\section{完整 Transformer LM 与资源记账}
+
+组装：token IDs $\to$ Embedding $\to$ $N$ Block $\to$ final RMSNorm $\to$ LM head $\to$ logits $\to$ softmax/loss。
+中间所有 Block 保持 $(batch,seq,d_{\text{model}})$；仅 Embedding 与 LM head 改变最后一维。
+
+\subsection{FLOPs 规则}
+$A\in\mathbb{R}^{m\times n},B\in\mathbb{R}^{n\times p}$：$AB$ 需 $2mnp$ FLOPs
+（每输出元素为长 $n$ 点积 $=2n$，共 $mp$ 个元素）。
+
+\subsection{参数量清单（无 bias；$d=d_{\text{model}}$，$V=$vocab）}
+Embedding $Vd$；每 Block：MHA $4d^2$、SwiGLU $3dd_{\text{ff}}$、两 norm $2d$；
+final norm $d$；LM head $Vd$（不共享权重）。
+\[
+\text{总参数}=2Vd+N(4d^2+3dd_{\text{ff}}+2d)+d
+\]
+fp32 内存 $=4\times$ 参数量（字节）。
+
+\section{Cross-Entropy Loss 与数值稳定}
+
+$\ell_i=-\log\text{softmax}(o_i)[t]=-o_i[t]+\log\sum_a e^{o_i[a]}$，$t=x_{i+1}$。
+减最大值 $m=\max_a o_i[a]$（log-sum-exp）：
+$\log\sum_a e^{o_i[a]}=m+\log\sum_a e^{o_i[a]-m}$。
+同时减 $m$ 等价分子分母同除 $e^m$，softmax 不变；减后 $\exp$ 输入 $\le0$，不溢出。
+
+\section{AdamW 与训练内存}
+
+每参数维护 $m,v$ 两个 fp32 状态 $\Rightarrow$ 优化器状态内存 $=2\times$ 参数内存。
+fp32 下：参数 $4P$、梯度 $4P$、优化器 $8P$ $\Rightarrow$ 固定部分 $16P$ 字节（$P$ 为参数量）。
+更新：$\theta\leftarrow\theta-\eta(\hat m/(\sqrt{\hat v}+\epsilon)+\lambda\theta)$，$\hat m,\hat v$ 为偏差修正矩；$\lambda\theta$ 为解耦权重衰减。
+
+\end{document}
