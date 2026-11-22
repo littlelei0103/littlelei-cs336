@@ -17,12 +17,13 @@ def cross_entropy(inputs: Tensor, targets: Tensor) -> Tensor:
 
 
 def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
+    params = list(parameters)
     total_norm = torch.sqrt(
-        sum(p.grad.data.norm(2).pow(2) for p in parameters if p.grad is not None)
+        sum(p.grad.data.norm(2).pow(2) for p in params if p.grad is not None)
     )
     if total_norm > max_l2_norm:
         clip = max_l2_norm / (total_norm + 1e-6)
-        for p in parameters:
+        for p in params:
             if p.grad is not None:
                 p.grad.data.mul_(clip)
 

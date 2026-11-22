@@ -51,3 +51,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+# ===== 训练 checkpoint（每个数百 MB，可重新生成）=====
+*.pt
+*.pth

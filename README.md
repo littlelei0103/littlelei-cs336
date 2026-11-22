@@ -14,7 +14,8 @@
 - [x] **Assignment 1 · BPE 分词器**（TinyStories + OWT 训练、编码/解码/序列化、压缩率/吞吐量实验）
 - [x] **Assignment 1 · Transformer 语言模型**（RMSNorm / SwiGLU / RoPE / MHA / pre-norm Block / 整栈，模型测试 13/13）
 - [x] **Assignment 1 · 训练工具 + 解码**（cross-entropy / 梯度裁剪 / AdamW / cosine 调度 / get_batch / checkpoint / temperature+top-p 采样）
-- [ ] Assignment 1 · 训练循环 + 消融实验（LR / batch size / RMSNorm / post-norm / NoPE / SwiGLU / OWT）
+- [x] **Assignment 1 · 训练循环 + TinyStories baseline**（327.68M token，val **1.336** $\le$ 1.45）
+- [ ] Assignment 1 · 实验：LR sweep / batch size / RMSNorm / post-norm / NoPE / SwiGLU / OWT
 - [ ] 后续：训练系统 / 分布式 / 缩放定律 / 对齐 …（持续更新 🌱）
 
 ## ✨ Assignment 1 · BPE
@@ -87,6 +88,26 @@
 
 `train.py` 的参数框架（argparse）已就绪，训练循环待填；数据已离线 tokenize 为 uint16 `.npy`。
 
+## ✨ Assignment 1 · TinyStories Baseline
+
+按 handout 标准配置训练（327.68M token），硬件 RTX 5070 Laptop 8GB（WSL2）：
+
+| 项目 | 值 |
+|------|-----|
+| 模型 | 4 层 / 16 头 / d_model 512 / d_ff 1344 / ctx 256 / vocab 10000 |
+| 训练 | batch 32 × 40k 步，AdamW lr 1e-3（warmup 500 + cosine 40k），wd 0.01，clip 1.0 |
+| 精度/加速 | bf16 autocast + TF32；~48k tokens/s，峰值显存 5.6GB，耗时 ~1.9h |
+| 验证 | **val loss 1.336 ± 0.005**（100 batch 稳定评估，fp32） |
+| 产物 | `experiments/base_log.txt`、`experiments/ckpt_base.pt`（ckpt 已 gitignore） |
+
+生成样例（prompt `Once upon a time`，temp 0.8 / top-p 0.9，133 token 后自然 eot）：
+
+> Once upon a time, there was a big box. Inside the box, there was a small toy. The toy was a ball. The ball was in the box. The ball was very useful. It could bounce and roll. One day, a little girl found the box. ... They were the best of friends.
+
+> 💡 踩坑记录：batch 64 + fp32 峰值 10GB，溢出到 WSL 共享显存导致 **8.6s/step**；降到 batch 32 + bf16 后 0.2s/step，快 20 倍。显存溢出不会报 OOM，只会悄悄变慢——用 `max_memory_allocated` 实测最靠谱。
+
+完整实验记录见 [`experiments/experiment_log.md`](assignment1-basics/experiments/experiment_log.md)。
+
 ## 🧪 Tokenizer 实验
 
 | 实验 | 结果 |
@@ -114,7 +135,7 @@ CS336/
 │   ├── tokenizer_experiments.py  # 压缩率/吞吐量/uint16 编码实验
 │   ├── math_notes.tex        # 数学笔记（PE/RoPE/attention/AdamW…）
 │   ├── writeup.tex           # 书面题答案（unicode/BPE/tokenizer/记账）
-│   ├── experiments/          # 词表/运行日志/编码数组（.npy 已 gitignore）
+│   ├── experiments/          # 词表/日志/编码数组/实验记录（.npy/.pt 已 gitignore）
 │   ├── tests/                # 官方测试
 │   └── data/                 # 数据集（已 gitignore，需自行下载）
 ├── lectures/                 # 课程讲义代码（课件素材已 gitignore）
@@ -129,6 +150,8 @@ CS336/
 cd assignment1-basics
 uv run pytest -q                      # 全量测试（当前 47 passed, 1 xfailed）
 uv run python train.py --help         # 训练脚本参数
+uv run python train.py --train_data experiments/ts_train.npy --val_data experiments/ts_valid.npy \
+  --batch_size 32 --total_steps 40000 --checkpoint_path experiments/ckpt.pt --log_path experiments/train_log.txt
 uv run python train_tokenizer.py      # 训练 TinyStories 分词器
 uv run python train_owt.py            # 训练 OWT 分词器
 uv run python tokenizer_experiments.py  # 压缩率/吞吐量/uint16 实验

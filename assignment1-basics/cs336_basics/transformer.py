@@ -54,7 +54,7 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
             pos = token_positions.unsqueeze(-2)
             q = self.RoPE(q, pos)
             k = self.RoPE(k, pos)
-        mask = ~torch.triu(torch.ones(s, s, dtype=torch.bool), diagonal=1)
+        mask = ~torch.triu(torch.ones(s, s, dtype=torch.bool, device=x.device), diagonal=1)
         out = scaled_dot_product_attention(q, k, v, mask=mask)
         out = out.transpose(1, 2).reshape(B, s, d)
         return self.output_proj(out)

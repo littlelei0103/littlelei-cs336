@@ -31,7 +31,7 @@ def decode(
                 next_token.append(torch.argmax(last).item())
             if eot_token_id is not None and next_token[-1] == eot_token_id:
                 break
-            prompt = torch.cat((prompt, torch.tensor([[next_token[-1]]], dtype=torch.long)), dim=1)
+            prompt = torch.cat((prompt, torch.tensor([[next_token[-1]]], dtype=torch.long, device=prompt.device)), dim=1)
     return next_token
         
         
