@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import torch
 from torch import Tensor
-from cs336_basics.nn import softmax, Linear, Embedding, SwiGLU, RMSNorm
+from cs336_basics.nn import softmax, Linear, Embedding, SwiGLU, RMSNorm, FFNSiLU
 
 class RotaryPositionalEmbedding(torch.nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
@@ -34,7 +34,7 @@ def scaled_dot_product_attention(
     return softmax(scores, dim=-1) @ V
 
 class CausalMultiHeadSelfAttention(torch.nn.Module):
-    def __init__(self, d_model: int, num_heads: int):
+    def __init__(self, d_model: int, num_heads: int, use_rope: bool = True):
         super().__init__()
         self.q_proj = Linear(d_model, d_model)
         self.k_proj = Linear(d_model, d_model)
@@ -43,6 +43,7 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
         self.h = num_heads
         self.dh = d_model // num_heads
         self.dk = d_model // num_heads
+        self.use_rope = use_rope
         self.RoPE = RotaryPositionalEmbedding(theta=10000, d_k=self.dh, max_seq_len=2048)
 
     def forward(self, x: Tensor, token_positions: Tensor | None = None) -> Tensor:
@@ -50,7 +51,7 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
         q = self.q_proj(x).view(B, s, self.h, self.dh).transpose(1, 2)
         k = self.k_proj(x).view(B, s, self.h, self.dh).transpose(1, 2)
         v = self.v_proj(x).view(B, s, self.h, self.dh).transpose(1, 2)
-        if token_positions is not None:
+        if token_positions is not None and self.use_rope:
             pos = token_positions.unsqueeze(-2)
             q = self.RoPE(q, pos)
             k = self.RoPE(k, pos)
@@ -60,16 +61,31 @@ class CausalMultiHeadSelfAttention(torch.nn.Module):
         return self.output_proj(out)
 
 class TransformerBlock(torch.nn.Module):
-    def __init__(self, d_model: int, num_heads: int, d_ff: int):
+    def __init__(self,
+        d_model: int, 
+        num_heads: int, 
+        d_ff: int, 
+        use_rope: bool = True, 
+        post_norm: bool = False,
+        use_rmsnorm: bool = True,
+        use_swiglu: bool = True
+    ):
         super().__init__()
-        self.attn = CausalMultiHeadSelfAttention(d_model, num_heads)
-        self.ffn = SwiGLU(d_model, d_ff)
-        self.ln1 = RMSNorm(d_model)
-        self.ln2 = RMSNorm(d_model)
+        self.attn = CausalMultiHeadSelfAttention(d_model, num_heads, use_rope)
+        self.ffn = SwiGLU(d_model, d_ff) if use_swiglu else FFNSiLU(d_model, d_ff)
+        self.ln1 = RMSNorm(d_model) if use_rmsnorm else torch.nn.Identity()
+        self.ln2 = RMSNorm(d_model) if use_rmsnorm else torch.nn.Identity()
+        self.use_rope = use_rope
+        self.post_norm = post_norm
+        self.use_swiglu = use_swiglu
 
     def forward(self, x: Tensor, token_positions: Tensor | None = None) -> Tensor:
-        x = x + self.attn.forward(self.ln1.forward(x), token_positions)
-        x = x + self.ffn.forward(self.ln2.forward(x))
+        if self.post_norm:
+            x = self.ln1.forward(x + self.attn.forward(x, token_positions))
+            x = self.ln2.forward(x + self.ffn.forward(x))
+        else:
+            x = x + self.attn.forward(self.ln1.forward(x), token_positions)
+            x = x + self.ffn.forward(self.ln2.forward(x))
         return x
 
 
@@ -82,11 +98,15 @@ class TransformerLM(torch.nn.Module):
         d_model: int,
         num_heads: int,
         d_ff: int,
+        use_rope: bool = True,
+        post_norm: bool = False,
+        use_rmsnorm: bool = True,
+        use_swiglu: bool = True
     ):
         super().__init__()
         self.token_embeddings = Embedding(vocab_size, d_model)
-        self.layers = torch.nn.ModuleList([TransformerBlock(d_model, num_heads, d_ff) for _ in range(num_layers)])
-        self.ln_final = RMSNorm(d_model)
+        self.layers = torch.nn.ModuleList([TransformerBlock(d_model, num_heads, d_ff, use_rope, post_norm, use_rmsnorm, use_swiglu) for _ in range(num_layers)])
+        self.ln_final = RMSNorm(d_model) if use_rmsnorm else torch.nn.Identity()
         self.lm_head = Linear(d_model, vocab_size)
             
 

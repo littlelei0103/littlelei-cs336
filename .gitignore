@@ -54,3 +54,9 @@ Thumbs.db
 # ===== 训练 checkpoint（每个数百 MB，可重新生成）=====
 *.pt
 *.pth
+
+# ===== 本地讲解示意图（不入库）=====
+vibe_images/
+
+# ===== 训练 stdout（逐 step 日志已单独保存，stdout 不入库）=====
+assignment1-basics/experiments/*_stdout.txt

@@ -2,6 +2,8 @@
 \usepackage[a4paper, margin=2.5cm]{geometry}
 \usepackage{amsmath}
 \usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{float}
 
 \title{CS336 Assignment 1: Basics\\\large Writeup}
 \author{littlelei}
@@ -106,5 +108,110 @@ $\approx3B[N(8sd^2+4s^2d+6sdd_{\text{ff}})+2sdV]\approx6PBs$。
 
 \subsection{(d) H100（495 TFLOP/s，50\% MFU），XL、400K steps、batch 1024，需多少小时？}
 总 FLOPs $=400\times10^3\times6PBs$，有效算力 $0.5\times495\times10^{12}$，时间 $\approx4632$ 小时（约 193 天），故需分布式训练。
+
+\section{实验设置}
+
+硬件为 RTX 5070 Laptop 8GB（WSL2）；模型为 4 层、16 头、$d_{\text{model}}=512$、$d_{\text{ff}}=1344$（约 22.7M 参数）；TinyStories 训练 327.68M token，OWT 训练 164M token；使用 bf16 autocast + TF32 与 AdamW（lr $10^{-3}$、warmup 500、cosine 退火、weight decay 0.01、grad clip 1.0）。
+
+\section{学习率调优 (learning\_rate)}
+
+\subsection{(a) LR sweep 与搜索策略}
+先用 5k 步短跑在 log 空间扫描 5 个学习率，每个 checkpoint 用 100 batch 稳定评估；最优区间为 $10^{-3}$--$2\times10^{-3}$，$3\times10^{-3}$ 明显过热。最后用 $10^{-3}$ 跑满 40k 步，验证集 loss 为 1.336。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/lr_sweep.png}
+  \caption{5k 步短跑（41M token）的学习率 sweep，100 batch 稳定评估。}
+\end{figure}
+
+\subsection{(b) 稳定性边缘（edge of stability）}
+
+学习率越大，单步参数更新幅度越大：合适时沿损失面稳定下降并收敛到极小值附近；过大时一步就跨过整个低谷，参数在两侧反复横跳，loss 震荡甚至发散（lr=1.0 时验证 loss 一度达到 362）。余弦退火让后期学习率衰减，可以显著缓解这种震荡（退火后 loss 从 347 恢复到约 5.8），但无法追回已经损失的质量。稳定性边缘很难先验估计——经典理论对普通梯度下降给出 lr $<2/\lambda_{\max}$，但对 AdamW + RMSNorm 的 Transformer 没有实用的先验公式；本实验里 lr 到 $3\times10^{-1}$ 仍未发散、$1.0$ 才炸，说明边缘远高于经典预期，只能靠实验确定。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\linewidth]{experiments/plots/lr_divergence.png}
+  \caption{继续增大学习率的发散探针（纵轴对数）。lr=1.0（无梯度裁剪）在 warmup 后发散至 347，随 cosine 退火恢复到约 5.8。}
+\end{figure}
+
+\section{Batch Size 实验}
+
+B=1 时总 token 只有 1.28M，远少于其他行的约 41M，val 偏大主要来自训练不足，属于没有控制变量。固定 token 预算时，更新次数随 B 增大而减少，而 val 大致呈单峰形，在 B=16 时最小（1.615）。B=8 虽然更新更频繁，但 batch 小、梯度噪声大，每步方向更抖，并非每次都朝有利方向更新，收益被噪声抵消；B=32/48 则更新次数更少，收敛略差。更大的 batch（64/128）受 8GB 显存限制无法直接运行，可用梯度累积：例如拆成两个 micro-batch 各 32 依次前向/反向并累加梯度，再统一更新一次，等效 batch 为 64，但更新次数不变，只是梯度方向更稳定。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/batch_sweep.png}
+  \caption{固定约 41M token 的 batch size 对比。}
+\end{figure}
+
+\section{文本生成 (generate)}
+
+模型输出（prompt \texttt{Once upon a time}，temperature 0.8，top-$p$ 0.9，遇到 \texttt{<|endoftext|>} 停止）：
+
+\begin{quote}
+Once upon a time, there was a big box. Inside the box, there was a small toy. The toy was a ball. The ball was in the box. The ball was very useful. It could bounce and roll. One day, a little girl found the box. She saw the ball. She wanted to play with the ball. The little girl took the ball and threw it. The ball was fun to play with. The ball and the little girl played all day. They bounced and rolled. They were very happy. The ball was useful for playing. The little girl and the ball had a lot of fun. They were the best of friends.
+\end{quote}
+
+输出的流畅性较好，语法基本正确、故事结构完整；影响输出质量的因素包括采样温度 temperature、训练 token 数以及模型参数量。
+
+\section{消融 1：移除 RMSNorm}
+
+RMSNorm 的作用是归一化：把每个 token 的向量尺度拉回固定范围，防止残差流随层数累积而不断膨胀。去掉之后，$x$ 的范数随深度增长，输出 logits 随之爆炸（step 2000 验证 loss 冲到 130.8），最终在 step 3000 出现 nan；把 lr 降低到 $3\times10^{-4}$ 虽然能稳定训练，但最终 loss 仍比 pre-norm 差约 0.175，说明 RMSNorm 不只是"防爆"，也影响优化效率和最终质量。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/no_rmsnorm.png}
+  \caption{移除 RMSNorm 的 10k 步训练（纵轴对数）。lr=1e-3 时 step 2000 验证 loss 冲到 130.8 后于 step 3000 出现 nan；lr=3e-4 可稳定训练。}
+\end{figure}
+
+\section{消融 2：Post-norm vs Pre-norm}
+
+Post-norm 在这里没有出现明显不稳定，主要因为模型很小（4 层）、warmup 500 步与梯度裁剪 1.0 提供了足够的保护，且两版都保留了 \texttt{ln\_final}；最终 1.5186 仅比 pre-norm 的 1.4920 差 0.027。pre-norm 的优势（残差流不被归一化、梯度直通）在这个规模下表现为小幅领先，而不是数量级差异。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/postnorm_vs_prenorm.png}
+  \caption{Post-norm 与 pre-norm 的 10k 步对比（同 schedule）；100 batch 稳定评估 1.5186 vs 1.4920。}
+\end{figure}
+
+\section{消融 3：RoPE vs NoPE}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/rope_vs_nope.png}
+  \caption{RoPE 与 NoPE 的 10k 步对比（同 schedule）。}
+\end{figure}
+
+NoPE 没有崩，是因为因果 mask 的下三角结构隐含了位置信息；但模型仍然没有显式的距离概念，所以最终效果低于 RoPE（1.593 vs 1.492）。
+
+\section{消融 4：SwiGLU vs SiLU}
+
+在参数量基本对齐（22.70M vs 22.83M）时，SwiGLU 仍比 SiLU 好约 0.044。门控分支 $W_3x$ 让 FFN 的输出可以随输入内容逐 token 动态放大或抑制特征，相当于多了一条乘性交互通路；无门控的 SiLU 只能把 $d_{\text{ff}}$ 加宽来补参数，表达方式更单一。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/swiglu_vs_silu.png}
+  \caption{SwiGLU（$d_{\text{ff}}=1344$，22.70M 参数）与 SiLU（$d_{\text{ff}}=2048$，22.83M 参数）的 10k 步对比；100 batch 稳定评估 1.4920 vs 1.5363。}
+\end{figure}
+
+\section{OpenWebText 主实验}
+
+词表不同（32k vs 10k）导致 per-token loss 的含义不同；OWT 数据多样性更高、条件熵更大；且相同迭代数下 batch size 为 16，训练 token 数只有 TinyStories 的一半，因此 loss 明显更高。
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.8\linewidth]{experiments/plots/owt_curve.png}
+  \caption{OpenWebText 40k 步训练曲线（B=16，32k 词表）。}
+\end{figure}
+
+OWT 生成样例（prompt \texttt{The}，temperature 0.8，top-$p$ 0.9，256 token 截断）：
+
+\begin{quote}
+The risk of being a lug for a few years in a short time is very low. ``That's going to be a lot more difficult,'' said Ajnevze. ``It's a lot more dangerous than my non-sugar. That's a lot of pressure. It's going to get a lot of support and we're going to get a lot of the risk.'' And here's the catch: That's a bit of a shock. In a recent report by New York Times (via The New York Times) and The New York Times, all the other major research groups, have found that this is about the economic success of the research center. If they're worried about the impact of the weather, then the rate of people making the job right now, and the rise of people who are feeling that the warming will likely rise.
+\end{quote}
+
+语法和格式可以，但语义上不连贯；同样模型和预算下，OWT 数据多样性/熵更高、训练 token 更少，模型只能学到局部语言模式。
+
+完整的实验记录（配置、曲线节点、所有尝试）见 \texttt{experiments/experiment\_log.md}。
 
 \end{document}

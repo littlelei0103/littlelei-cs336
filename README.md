@@ -15,7 +15,9 @@
 - [x] **Assignment 1 · Transformer 语言模型**（RMSNorm / SwiGLU / RoPE / MHA / pre-norm Block / 整栈，模型测试 13/13）
 - [x] **Assignment 1 · 训练工具 + 解码**（cross-entropy / 梯度裁剪 / AdamW / cosine 调度 / get_batch / checkpoint / temperature+top-p 采样）
 - [x] **Assignment 1 · 训练循环 + TinyStories baseline**（327.68M token，val **1.336** $\le$ 1.45）
-- [ ] Assignment 1 · 实验：LR sweep / batch size / RMSNorm / post-norm / NoPE / SwiGLU / OWT
+- [x] **Assignment 1 · 实验矩阵**（LR sweep / 发散边界 / batch size / context / warmup / weight decay）
+- [x] **Assignment 1 · 架构消融**（NoPE / post-norm / 去 RMSNorm / SwiGLU vs SiLU）+ OWT 主实验
+- [x] **Assignment 1 · 完整 writeup**（数学题 + 实验报告，8 张学习曲线）
 - [ ] 后续：训练系统 / 分布式 / 缩放定律 / 对齐 …（持续更新 🌱）
 
 ## ✨ Assignment 1 · BPE
@@ -86,7 +88,7 @@
 | checkpoint | model/optimizer state + iteration 存取，支持续训 |
 | decode | 自回归采样：温度缩放 + top-p（nucleus）+ eot 停止 + 贪心兜底 |
 
-`train.py` 的参数框架（argparse）已就绪，训练循环待填；数据已离线 tokenize 为 uint16 `.npy`。
+`train.py` 已实现完整训练循环（bf16 autocast + TF32、checkpoint 续训），并提供 `--no_rope / --post_norm / --no_rmsnorm / --ffn_silu` 消融开关；数据已离线 tokenize 为 uint16 `.npy`。
 
 ## ✨ Assignment 1 · TinyStories Baseline
 
@@ -107,6 +109,25 @@
 > 💡 踩坑记录：batch 64 + fp32 峰值 10GB，溢出到 WSL 共享显存导致 **8.6s/step**；降到 batch 32 + bf16 后 0.2s/step，快 20 倍。显存溢出不会报 OOM，只会悄悄变慢——用 `max_memory_allocated` 实测最靠谱。
 
 完整实验记录见 [`experiments/experiment_log.md`](assignment1-basics/experiments/experiment_log.md)。
+
+## ✨ Assignment 1 · 实验矩阵与架构消融
+
+对比实验统一使用 4 层 / 512d 模型、TinyStories（OWT 除外）、100 batch 稳定评估；消融固定 10k 步、B=32、lr 1e-3、warmup 500、cosine 10k 的相同 schedule。
+
+| 实验 | 设置 | val loss | 结论 |
+|---|---|---|---|
+| Baseline | 40k 步 / 327.68M token | **1.336** | 达标 |
+| LR sweep | 5k 短跑 × 5 个点 | 1e-3–2e-3 最优 | 3e-3 过热 |
+| 发散边界 | lr 最高到 1.0（关 clip） | — | 3e-1 仍稳；1.0 发散至 362，退火恢复到 ~5.8 |
+| Batch size | 固定 ~41M token | B=16 **1.615** 最优 | B=1 只训 1.28M token，不可比 |
+| Context | 固定 ~41M token | ctx 512 **1.590** | 更长 context 更好，但吞吐约减半 |
+| RoPE vs NoPE | 10k 步 | **1.492** vs 1.593 | 因果 mask 隐式提供位置信息，但不如显式 RoPE |
+| Pre vs Post-norm | 10k 步 | **1.492** vs 1.519 | 小模型 + warmup/clip 下差距很小，未见明显不稳定 |
+| 去 RMSNorm | 10k 步 | lr 1e-3 → **nan**；lr 3e-4 → 1.667 | 降 lr 能稳定，但显著变差 |
+| SwiGLU vs SiLU | 参数对齐（22.70M vs 22.83M） | **1.492** vs 1.536 | 同等参数下门控更好 |
+| OWT | 40k 步 / 164M token / 32k 词表 | 4.082 | 数据更难、训练 token 更少 |
+
+曲线与完整配置见 `experiments/plots/` 与 [`experiment_log.md`](assignment1-basics/experiments/experiment_log.md)；实验章节与 8 张图已写入 [`writeup.tex`](assignment1-basics/writeup.tex)。
 
 ## 🧪 Tokenizer 实验
 
@@ -129,13 +150,13 @@ CS336/
 │   │   ├── optim.py          # AdamW
 │   │   ├── train_utils.py    # loss/clip/get_batch/schedule/checkpoint
 │   │   └── generate.py       # decode（temperature + top-p）
-│   ├── train.py              # 训练脚本（argparse 就绪，循环待填）
+│   ├── train.py              # 训练循环（bf16+TF32、checkpoint、消融开关）
 │   ├── train_tokenizer.py    # TinyStories BPE 训练驱动
 │   ├── train_owt.py          # OWT BPE 训练驱动
 │   ├── tokenizer_experiments.py  # 压缩率/吞吐量/uint16 编码实验
 │   ├── math_notes.tex        # 数学笔记（PE/RoPE/attention/AdamW…）
-│   ├── writeup.tex           # 书面题答案（unicode/BPE/tokenizer/记账）
-│   ├── experiments/          # 词表/日志/编码数组/实验记录（.npy/.pt 已 gitignore）
+│   ├── writeup.tex           # 完整 writeup（数学题 + 实验报告 + 8 张图）
+│   ├── experiments/          # 词表/日志/曲线图/实验记录（.npy/.pt 已 gitignore）
 │   ├── tests/                # 官方测试
 │   └── data/                 # 数据集（已 gitignore，需自行下载）
 ├── lectures/                 # 课程讲义代码（课件素材已 gitignore）
@@ -152,6 +173,7 @@ uv run pytest -q                      # 全量测试（当前 47 passed, 1 xfail
 uv run python train.py --help         # 训练脚本参数
 uv run python train.py --train_data experiments/ts_train.npy --val_data experiments/ts_valid.npy \
   --batch_size 32 --total_steps 40000 --checkpoint_path experiments/ckpt.pt --log_path experiments/train_log.txt
+# 消融开关：--no_rope / --post_norm / --no_rmsnorm / --ffn_silu（后者配 --d_ff 2048）
 uv run python train_tokenizer.py      # 训练 TinyStories 分词器
 uv run python train_owt.py            # 训练 OWT 分词器
 uv run python tokenizer_experiments.py  # 压缩率/吞吐量/uint16 实验

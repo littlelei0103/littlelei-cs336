@@ -47,6 +47,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--log_path", type=str, default="experiments/train_log.txt")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--no_rope", action="store_true", help="Disable Rotary Positional Embeddings (RoPE)")
+    p.add_argument("--post_norm", action="store_true", help="Use post-layer normalization instead of pre-layer normalization")
+    p.add_argument("--no_rmsnorm", action="store_true", help="Disable RMSNorm and use Identity instead")
+    p.add_argument("--ffn_silu", action="store_true", help="Disable SwiGLU and use FFNSiLU instead")
     return p
 
 
@@ -63,6 +67,10 @@ def main() -> None:
         num_layers=args.num_layers,
         num_heads=args.num_heads,
         d_ff=args.d_ff,
+        use_rope=not args.no_rope,
+        post_norm=args.post_norm,
+        use_rmsnorm=not args.no_rmsnorm,
+        use_swiglu=not args.ffn_silu
     ).to(args.device)
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     start = load_checkpoint(args.checkpoint_path, model, optimizer) if args.resume else 0

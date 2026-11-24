@@ -52,6 +52,14 @@ class SwiGLU(torch.nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self.w2.forward(silu(self.w1.forward(x)) * self.w3.forward(x))
 
+class FFNSiLU(torch.nn.Module):
+    def __init__(self, d_model: int, d_ff: int):
+        super().__init__()
+        self.w1 = Linear(d_model, d_ff)
+        self.w2 = Linear(d_ff, d_model)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.w2.forward(silu(self.w1.forward(x)))
 
 def softmax(x: Tensor, dim: int) -> Tensor:
     m = torch.max(x, dim=dim, keepdim=True).values
